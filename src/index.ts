@@ -1,9 +1,16 @@
 import express, { Express, Request, Response } from "express";
 import UserRoutes from "./routes/user.routes";
+import dotenv from "dotenv";
+import { Pool } from "pg";
 
-const PORT = 8000;
+dotenv.config();
+
+const PORT = process.env.PORT || 8000;
+const DATABASE_URL = process.env.DATABASE_URL;
 
 const app: Express = express();
+
+app.use(express.json());
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Hello world");
@@ -11,6 +18,17 @@ app.get("/", (req: Request, res: Response) => {
 
 app.use("/users", UserRoutes);
 
-app.listen(PORT, () => {
-  console.log(`server is running on port http://localhost:${PORT}`);
+const pool = new Pool({
+  connectionString: DATABASE_URL,
 });
+
+pool
+  .connect()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("DB connection error:", err);
+  });
