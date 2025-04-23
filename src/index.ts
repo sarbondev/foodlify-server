@@ -1,5 +1,4 @@
 import express, { Express, Request, Response } from "express";
-import UserRoutes from "./routes/user.routes";
 import dotenv from "dotenv";
 import { Pool } from "pg";
 
@@ -15,8 +14,6 @@ app.use(express.json());
 app.get("/", (req: Request, res: Response) => {
   res.send("Hello world");
 });
-
-app.use("/users", UserRoutes);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
