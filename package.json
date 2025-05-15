@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon src/index.ts",
+    "dev": "nodemon index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
@@ -17,14 +17,12 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "joi": "^17.13.3",
-    "mongoose": "^8.13.2",
-    "pg": "^8.14.1"
+    "mongoose": "^8.13.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.1",
     "@types/joi": "^17.2.2",
     "@types/node": "^22.14.1",
-    "@types/pg": "^8.11.13",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"

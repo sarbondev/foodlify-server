@@ -1,12 +1,10 @@
 import mongoose from "mongoose";
 
-const UserSchema = new mongoose.Schema({
+const BranchAdminSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   phoneNumber: { type: String, required: true },
   password: { type: String, required: true },
-  role: { type: String, required: true },
+  role: { type: String, default: "branch-admin" },
 });
 
-const User = mongoose.model("User", UserSchema);
-
-export default User;
+export default mongoose.model("BranchAdminSchema", BranchAdminSchema);
