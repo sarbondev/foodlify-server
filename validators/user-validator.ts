@@ -1,6 +1,6 @@
 import Joi from "joi";
 
-export const clientValidator = Joi.object({
+export const UserValidator = Joi.object({
   fullName: Joi.string().required(),
   phoneNumber: Joi.string().required(),
   password: Joi.string().required(),
