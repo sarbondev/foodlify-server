@@ -4,11 +4,13 @@ import slugify from 'slugify';
 export interface ICategory extends Document {
     name: string;
     slug: string;
+    image: string
 }
 
 const CategorySchema = new Schema<ICategory>({
     name: { type: String, required: true, unique: true },
-    slug: { type: String, required: true, unique: true }
+    slug: { type: String, required: true, unique: true },
+    image: { type: String, required: true, },
 });
 
 CategorySchema.pre<ICategory>('save', function (next) {
