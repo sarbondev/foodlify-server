@@ -1,5 +1,5 @@
 import type { Request, Response } from "express"
-import { translate } from "../utils/translate"
+import translate from '@vitalets/google-translate-api';
 import { Product } from "../schemas/product.schema"
 import { createProductSchema, updateProductSchema } from "../validators/product.validator"
 import mongoose from "mongoose"
