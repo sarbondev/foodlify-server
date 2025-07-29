@@ -1,9 +1,9 @@
-import express from "express";
-import dotenv from "dotenv";
-import cors from "cors";
-import mongoose from "mongoose";
+const express = require("express");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const mongoose = require("mongoose");
 
-import RootRoutes from './routes/root.routes'
+const RootRoutes = require("./routes/root.routes");
 
 dotenv.config();
 
@@ -28,8 +28,7 @@ app.get("/", (req, res) => {
 app.use("/api", RootRoutes);
 
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI
-
+const MONGODB_URI = process.env.MONGODB_URI;
 
 if (!MONGODB_URI) {
   console.error("❌ MONGODB_URI is missing");

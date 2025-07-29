@@ -1,22 +1,6 @@
-import { Schema, model, Document, Types } from 'mongoose';
+const { Schema, model } = require('mongoose');
 
-export interface IProduct extends Document {
-    images: string[];
-    previewImage: string;
-    title_uz: string;
-    title_ru: string;
-    description_uz: string;
-    description_ru: string;
-    priceCard: number;
-    priceRegular: number;
-    discount: number;
-    category: Types.ObjectId;
-    weight: number;
-    sold: number;
-    stock: number;
-}
-
-const ProductSchema = new Schema<IProduct>(
+const ProductSchema = new Schema(
     {
         images: [{ type: String }],
         previewImage: { type: String, required: true },
@@ -35,4 +19,4 @@ const ProductSchema = new Schema<IProduct>(
     { timestamps: true }
 );
 
-export const Product = model<IProduct>('Product', ProductSchema);
+module.exports = model('Product', ProductSchema);
