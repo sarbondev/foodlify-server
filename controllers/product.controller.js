@@ -1,10 +1,78 @@
 const mongoose = require("mongoose");
 const { translate } = require("@vitalets/google-translate-api");
-const { Product } = require("../schemas/product.schema");
+const Product = require("../schemas/product.schema");
 const {
   createProductSchema,
   updateProductSchema,
 } = require("../validators/product.validator");
+
+// Tarjima funksiyasi - xatoliklarni yaxshi boshqaradi
+const translateWithFallback = async (
+  text,
+  fromLang,
+  toLang,
+  maxRetries = 3
+) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await translate(text, { from: fromLang, to: toLang });
+      return result.text;
+    } catch (error) {
+      console.error(`Translation attempt ${attempt} failed:`, error.message);
+
+      if (attempt === maxRetries) {
+        // Agar barcha urinishlar muvaffaqiyatsiz bo'lsa, asl matnni qaytarish
+        console.warn(
+          `Translation failed after ${maxRetries} attempts, using original text`
+        );
+        return text;
+      }
+
+      // Keyingi urinishdan oldin kutish
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+};
+
+// Tilni aniqlash funksiyasi
+const detectLanguageImproved = async (text) => {
+  try {
+    const result = await translate(text, { to: "en" });
+
+    if (!result?.from?.language?.iso) {
+      // Agar til aniqlanmasa, matn asosida taxmin qilish
+      const cyrillicPattern = /[\u0400-\u04FF]/;
+      const uzbekPattern = /[oʻgʼhqxjʼ]/i;
+
+      if (cyrillicPattern.test(text)) {
+        return "ru";
+      } else if (uzbekPattern.test(text)) {
+        return "uz";
+      } else {
+        return null;
+      }
+    }
+
+    return result.from.language.iso;
+  } catch (error) {
+    console.error("Language detection failed:", error.message);
+    return null;
+  }
+};
+
+// Parallel tarjima funksiyasi
+const translateTexts = async (texts, fromLang, toLang) => {
+  try {
+    const promises = texts.map((text) =>
+      translateWithFallback(text, fromLang, toLang)
+    );
+    return await Promise.all(promises);
+  } catch (error) {
+    console.error("Parallel translation failed:", error.message);
+    // Agar parallel tarjima ishlamasa, asl matnlarni qaytarish
+    return texts;
+  }
+};
 
 const createProduct = async (req, res) => {
   const validation = createProductSchema.validate(req.body);
@@ -26,41 +94,56 @@ const createProduct = async (req, res) => {
   } = req.body;
 
   try {
-    const result = await translate(title, { to: "en" });
-    if (!result?.from?.language?.iso) {
-      return res.status(400).json({ error: "Tilni aniqlab bo'lmadi" });
+    // Tilni aniqlash
+    const detectedLang = await detectLanguageImproved(title);
+
+    if (!detectedLang) {
+      return res.status(400).json({
+        error:
+          "Tilni aniqlab bo'lmadi. Iltimos, o'zbek yoki rus tilida yozing.",
+      });
     }
-    const lang = result.from.language.iso;
+
+    if (!["uz", "ru"].includes(detectedLang)) {
+      return res.status(400).json({
+        error: "Faqat o'zbek yoki rus tilida matn kiriting",
+      });
+    }
 
     let title_uz = "";
     let title_ru = "";
     let description_uz = "";
     let description_ru = "";
 
-    if (lang === "uz") {
-      const [tRu, dRu] = await Promise.all([
-        translate(title, { from: "uz", to: "ru" }),
-        translate(description, { from: "uz", to: "ru" }),
-      ]);
+    if (detectedLang === "uz") {
       title_uz = title;
-      title_ru = tRu.text;
       description_uz = description;
-      description_ru = dRu.text;
-    } else if (lang === "ru") {
-      const [tUz, dUz] = await Promise.all([
-        translate(title, { from: "ru", to: "uz" }),
-        translate(description, { from: "ru", to: "uz" }),
-      ]);
+
+      // Rus tiliga tarjima qilish
+      const [translatedTitle, translatedDescription] = await translateTexts(
+        [title, description],
+        "uz",
+        "ru"
+      );
+
+      title_ru = translatedTitle;
+      description_ru = translatedDescription;
+    } else if (detectedLang === "ru") {
       title_ru = title;
-      title_uz = tUz.text;
       description_ru = description;
-      description_uz = dUz.text;
-    } else {
-      return res
-        .status(400)
-        .json({ error: "Faqat uz yoki ru tilida matn kiriting" });
+
+      // O'zbek tiliga tarjima qilish
+      const [translatedTitle, translatedDescription] = await translateTexts(
+        [title, description],
+        "ru",
+        "uz"
+      );
+
+      title_uz = translatedTitle;
+      description_uz = translatedDescription;
     }
 
+    // Mahsulotni yaratish
     const product = new Product({
       images,
       previewImage,
@@ -80,12 +163,48 @@ const createProduct = async (req, res) => {
     await product.populate("category");
 
     res.status(201).json({
-      message: "Product created successfully",
+      message: "Mahsulot muvaffaqiyatli yaratildi",
       product,
+      translationInfo: {
+        detectedLanguage: detectedLang,
+        translationStatus: "success",
+      },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server xatosi" });
+    console.error("Product creation error:", error);
+
+    // Agar tarjima xatosi bo'lsa, asl matn bilan saqlashga harakat qilish
+    if (error.message.includes("translate")) {
+      try {
+        const product = new Product({
+          images,
+          previewImage,
+          title_uz: title,
+          title_ru: title,
+          description_uz: description,
+          description_ru: description,
+          priceCard,
+          priceRegular,
+          discount,
+          category,
+          weight,
+          stock,
+        });
+
+        await product.save();
+        await product.populate("category");
+
+        res.status(201).json({
+          message: "Mahsulot yaratildi (tarjimasiz)",
+          product,
+          warning: "Tarjima xizmati ishlamadi, asl matn saqlandi",
+        });
+      } catch (saveError) {
+        res.status(500).json({ error: "Mahsulotni saqlashda xatolik" });
+      }
+    } else {
+      res.status(500).json({ error: "Server xatosi" });
+    }
   }
 };
 
@@ -100,23 +219,33 @@ const getAllProducts = async (req, res) => {
       search,
       sortBy = "createdAt",
       sortOrder = "desc",
+      lang = "uz", // Til parametri qo'shildi
     } = req.query;
 
     const filter = {};
 
     if (category) filter.category = category;
+
     if (minPrice || maxPrice) {
       filter.priceCard = {};
       if (minPrice) filter.priceCard.$gte = Number(minPrice);
       if (maxPrice) filter.priceCard.$lte = Number(maxPrice);
     }
+
     if (search) {
-      filter.$or = [
-        { title_uz: { $regex: search, $options: "i" } },
-        { title_ru: { $regex: search, $options: "i" } },
-        { description_uz: { $regex: search, $options: "i" } },
-        { description_ru: { $regex: search, $options: "i" } },
-      ];
+      // Tanlangan tilga qarab qidirish
+      const searchFields =
+        lang === "uz"
+          ? [
+              { title_uz: { $regex: search, $options: "i" } },
+              { description_uz: { $regex: search, $options: "i" } },
+            ]
+          : [
+              { title_ru: { $regex: search, $options: "i" } },
+              { description_ru: { $regex: search, $options: "i" } },
+            ];
+
+      filter.$or = searchFields;
     }
 
     const sortOptions = {};
@@ -138,33 +267,40 @@ const getAllProducts = async (req, res) => {
         total,
         pages: Math.ceil(total / Number(limit)),
       },
+      language: lang,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get products error:", error);
     res.status(500).json({ error: "Mahsulotlarni olishda xatolik" });
   }
 };
 
 const getProductById = async (req, res) => {
   const { id } = req.params;
+
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Noto'g'ri ID" });
+    return res.status(400).json({ error: "Noto'g'ri ID formati" });
   }
 
   try {
     const product = await Product.findById(id).populate("category");
-    if (!product) return res.status(404).json({ error: "Topilmadi" });
+
+    if (!product) {
+      return res.status(404).json({ error: "Mahsulot topilmadi" });
+    }
+
     res.status(200).json({ product });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Xatolik yuz berdi" });
+    console.error("Get product by ID error:", error);
+    res.status(500).json({ error: "Mahsulotni olishda xatolik" });
   }
 };
 
 const updateProduct = async (req, res) => {
   const { id } = req.params;
+
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Noto'g'ri ID" });
+    return res.status(400).json({ error: "Noto'g'ri ID formati" });
   }
 
   const validation = updateProductSchema.validate(req.body);
@@ -173,46 +309,103 @@ const updateProduct = async (req, res) => {
   }
 
   try {
+    // Agar title yoki description yangilanayotgan bo'lsa, tarjima qilish
+    if (req.body.title || req.body.description) {
+      const currentProduct = await Product.findById(id);
+      if (!currentProduct) {
+        return res.status(404).json({ error: "Mahsulot topilmadi" });
+      }
+
+      const title = req.body.title || currentProduct.title_uz;
+      const description = req.body.description || currentProduct.description_uz;
+
+      try {
+        const detectedLang = await detectLanguageImproved(title);
+
+        if (detectedLang && ["uz", "ru"].includes(detectedLang)) {
+          if (detectedLang === "uz") {
+            const [title_ru, description_ru] = await translateTexts(
+              [title, description],
+              "uz",
+              "ru"
+            );
+            req.body.title_uz = title;
+            req.body.title_ru = title_ru;
+            req.body.description_uz = description;
+            req.body.description_ru = description_ru;
+          } else {
+            const [title_uz, description_uz] = await translateTexts(
+              [title, description],
+              "ru",
+              "uz"
+            );
+            req.body.title_ru = title;
+            req.body.title_uz = title_uz;
+            req.body.description_ru = description;
+            req.body.description_uz = description_uz;
+          }
+        }
+      } catch (translationError) {
+        console.warn(
+          "Translation failed during update, keeping original values"
+        );
+      }
+    }
+
     const updated = await Product.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     }).populate("category");
 
-    if (!updated) return res.status(404).json({ error: "Topilmadi" });
+    if (!updated) {
+      return res.status(404).json({ error: "Mahsulot topilmadi" });
+    }
 
     res.status(200).json({
-      message: "Product updated successfully",
+      message: "Mahsulot muvaffaqiyatli yangilandi",
       product: updated,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Xatolik" });
+    console.error("Update product error:", error);
+    res.status(500).json({ error: "Mahsulotni yangilashda xatolik" });
   }
 };
 
 const deleteProduct = async (req, res) => {
   const { id } = req.params;
+
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Noto'g'ri ID" });
+    return res.status(400).json({ error: "Noto'g'ri ID formati" });
   }
 
   try {
     const deleted = await Product.findByIdAndDelete(id);
-    if (!deleted) return res.status(404).json({ error: "Topilmadi" });
-    res.status(200).json({ message: "Mahsulot o'chirildi" });
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Mahsulot topilmadi" });
+    }
+
+    res.status(200).json({
+      message: "Mahsulot muvaffaqiyatli o'chirildi",
+      deletedProduct: {
+        id: deleted._id,
+        title_uz: deleted.title_uz,
+        title_ru: deleted.title_ru,
+      },
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server xatoligi" });
+    console.error("Delete product error:", error);
+    res.status(500).json({ error: "Mahsulotni o'chirishda xatolik" });
   }
 };
 
 const getProductsByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, lang = "uz" } = req.query;
 
     if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-      return res.status(400).json({ error: "Invalid category ID" });
+      return res.status(400).json({ error: "Noto'g'ri kategoriya ID" });
     }
 
     const products = await Product.find({ category: categoryId })
@@ -231,10 +424,13 @@ const getProductsByCategory = async (req, res) => {
         total,
         pages: Math.ceil(total / Number(limit)),
       },
+      language: lang,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server error" });
+    console.error("Get products by category error:", error);
+    res
+      .status(500)
+      .json({ error: "Kategoriya bo'yicha mahsulotlarni olishda xatolik" });
   }
 };
 
@@ -244,7 +440,13 @@ const updateProductStock = async (req, res) => {
     const { stock } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: "Invalid product ID" });
+      return res.status(400).json({ error: "Noto'g'ri mahsulot ID" });
+    }
+
+    if (stock < 0) {
+      return res
+        .status(400)
+        .json({ error: "Stok miqdori manfiy bo'lishi mumkin emas" });
     }
 
     const product = await Product.findByIdAndUpdate(
@@ -254,16 +456,36 @@ const updateProductStock = async (req, res) => {
     ).populate("category");
 
     if (!product) {
-      return res.status(404).json({ error: "Product not found" });
+      return res.status(404).json({ error: "Mahsulot topilmadi" });
     }
 
     res.status(200).json({
-      message: "Stock updated successfully",
+      message: "Stok muvaffaqiyatli yangilandi",
       product,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server error" });
+    console.error("Update stock error:", error);
+    res.status(500).json({ error: "Stokni yangilashda xatolik" });
+  }
+};
+
+// Tarjima holatini tekshirish funksiyasi
+const checkTranslationHealth = async (req, res) => {
+  try {
+    const testText = "test";
+    const result = await translateWithFallback(testText, "uz", "ru", 1);
+
+    res.status(200).json({
+      status: "healthy",
+      message: "Tarjima xizmati ishlayapti",
+      testResult: result,
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "unhealthy",
+      message: "Tarjima xizmati ishlamayapti",
+      error: error.message,
+    });
   }
 };
 
@@ -275,4 +497,5 @@ module.exports = {
   deleteProduct,
   getProductsByCategory,
   updateProductStock,
+  checkTranslationHealth, // Yangi funksiya
 };
